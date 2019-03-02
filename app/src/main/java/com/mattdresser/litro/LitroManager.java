@@ -53,7 +53,7 @@ public class LitroManager extends CanvasWatchFaceService {
     private static final String TAG = "LitroManager";
 
     private static final Typeface NORMAL_TYPEFACE =
-            Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL);
+            Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL);
 
     /**
      * Update rate in milliseconds for interactive mode. Defaults to one second
@@ -120,6 +120,7 @@ public class LitroManager extends CanvasWatchFaceService {
         private float mYOffset;
         private Paint mBackgroundPaint;
         private Paint mTextPaint;
+        private Paint mCalendarPaint;
         /**
          * Whether the display supports fewer bits for each color in ambient mode. When true, we
          * disable anti-aliasing in ambient mode.
@@ -208,6 +209,13 @@ public class LitroManager extends CanvasWatchFaceService {
             mTextPaint.setColor(
                     ContextCompat.getColor(getApplicationContext(), R.color.digital_text));
 
+            // Calendar paint
+            mCalendarPaint = new Paint();
+            mCalendarPaint.setTypeface(NORMAL_TYPEFACE);
+            mCalendarPaint.setAntiAlias(true);
+            mCalendarPaint.setColor(
+                    ContextCompat.getColor(getApplicationContext(), R.color.digital_text));
+
             paoHandler.post(paoRunnable);
         }
 
@@ -267,6 +275,12 @@ public class LitroManager extends CanvasWatchFaceService {
                     ? R.dimen.digital_text_size_round : R.dimen.digital_text_size);
 
             mTextPaint.setTextSize(textSize);
+
+            float calendarTextSize = resources.getDimension(isRound
+                    ? R.dimen.digital_calendar_text_size_round : R.dimen.digital_calendar_text_size);
+
+            mCalendarPaint.setTextSize(calendarTextSize);
+
         }
 
         @Override
@@ -289,6 +303,7 @@ public class LitroManager extends CanvasWatchFaceService {
             mAmbient = inAmbientMode;
             if (mLowBitAmbient) {
                 mTextPaint.setAntiAlias(!inAmbientMode);
+                mCalendarPaint.setAntiAlias(!inAmbientMode);
             }
 
             // Whether the timer should be running depends on whether we're visible (as well as
@@ -312,8 +327,8 @@ public class LitroManager extends CanvasWatchFaceService {
                 case TAP_TYPE_TAP:
                     // The user has completed the tap gesture.
                     // TODO: Add code to handle the tap gesture.
-                    Toast.makeText(getApplicationContext(), R.string.message, Toast.LENGTH_SHORT)
-                            .show();
+                    //Toast.makeText(getApplicationContext(), R.string.message, Toast.LENGTH_SHORT)
+                    //        .show();
                     break;
             }
             invalidate();
@@ -342,11 +357,17 @@ public class LitroManager extends CanvasWatchFaceService {
             mCalendar.setTimeInMillis(now);
 
             String text = mAmbient
-                    ? String.format("%d:%02d", mCalendar.get(Calendar.HOUR),
+                    ? String.format("%d:%02d",
+                    (mCalendar.get(Calendar.HOUR) == 0 ? 12 : mCalendar.get(Calendar.HOUR)),
                     mCalendar.get(Calendar.MINUTE))
-                    : String.format("%d:%02d:%02d", mCalendar.get(Calendar.HOUR),
+                    : String.format("%d:%02d:%02d",
+                    (mCalendar.get(Calendar.HOUR) == 0 ? 12 : mCalendar.get(Calendar.HOUR)),
                     mCalendar.get(Calendar.MINUTE), mCalendar.get(Calendar.SECOND));
             canvas.drawText(text, mXOffset, mYOffset, mTextPaint);
+
+            String date = String.format("%d/%d/%d", mCalendar.get(Calendar.MONTH),
+                    mCalendar.get(Calendar.DAY_OF_MONTH), mCalendar.get(Calendar.YEAR));
+            canvas.drawText(date, mXOffset, mYOffset + 30, mCalendarPaint);
         }
 
         /**
