@@ -6,12 +6,17 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
@@ -34,6 +39,8 @@ import com.android.volley.toolbox.Volley;
 
 import java.lang.ref.WeakReference;
 import java.util.Calendar;
+import java.util.List;
+import java.util.Locale;
 import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
 
@@ -104,6 +111,47 @@ public class LitroManager extends CanvasWatchFaceService {
         }
     }
 
+    private class SensorPuller implements SensorEventListener {
+
+        SensorManager manager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+        //List<Sensor> deviceSensors = manager.getSensorList(Sensor.TYPE_ALL);
+        Sensor pressureSensor;
+        Float pressureSensorVal;
+
+        private SensorPuller () {
+
+        }
+
+        private void registerSensorListener()
+        {
+            pressureSensor = manager.getDefaultSensor(Sensor.TYPE_PRESSURE);
+            if (pressureSensor != null) {
+                manager.registerListener(this, pressureSensor, 1000000);
+            }
+        }
+
+        private void unregisterSensorListener()
+        {
+            manager.unregisterListener(this);
+        }
+
+        private Float getPressureSensorVal()
+        {
+            return pressureSensorVal;
+        }
+
+        @Override
+        public void onSensorChanged(SensorEvent event) {
+            Log.d(TAG, Float.valueOf(event.values[0]).toString());
+            pressureSensorVal = event.values[0];
+        }
+
+        @Override
+        public void onAccuracyChanged(Sensor sensor, int accuracy) {
+
+        }
+    }
+
     private class Engine extends CanvasWatchFaceService.Engine {
 
         private final Handler mUpdateTimeHandler = new EngineHandler(this);
@@ -118,9 +166,12 @@ public class LitroManager extends CanvasWatchFaceService {
         private boolean mRegisteredTimeZoneReceiver = false;
         private float mXOffset;
         private float mYOffset;
+        private float mYOffsetSensors;
         private Paint mBackgroundPaint;
         private Paint mTextPaint;
         private Paint mCalendarPaint;
+        private Paint mSensorPaint;
+        private Paint mIconPaint;
         /**
          * Whether the display supports fewer bits for each color in ambient mode. When true, we
          * disable anti-aliasing in ambient mode.
@@ -129,9 +180,12 @@ public class LitroManager extends CanvasWatchFaceService {
         private boolean mBurnInProtection;
         private boolean mAmbient;
 
+        private SensorPuller puller;
+
         private ImageLoader mImageLoader;
 
         private Bitmap mBitmap;
+        private Bitmap mBarometerIcon;
 
         private Handler paoHandler = new Handler();
 
@@ -186,6 +240,8 @@ public class LitroManager extends CanvasWatchFaceService {
         public void onCreate(SurfaceHolder holder) {
             super.onCreate(holder);
 
+            puller = new SensorPuller();
+
             mImageLoader = VolleySingleton.getInstance().getImageLoader();
 
             setWatchFaceStyle(new WatchFaceStyle.Builder(LitroManager.this)
@@ -196,6 +252,9 @@ public class LitroManager extends CanvasWatchFaceService {
 
             Resources resources = LitroManager.this.getResources();
             mYOffset = resources.getDimension(R.dimen.digital_y_offset);
+            mYOffsetSensors = resources.getDimension(R.dimen.digital_y_offset_sensors);
+
+            mBarometerIcon = BitmapFactory.decodeResource(resources, R.drawable.barometer_light);
 
             // Initializes background.
             mBackgroundPaint = new Paint();
@@ -215,6 +274,15 @@ public class LitroManager extends CanvasWatchFaceService {
             mCalendarPaint.setAntiAlias(true);
             mCalendarPaint.setColor(
                     ContextCompat.getColor(getApplicationContext(), R.color.digital_text));
+
+            // Pressure sensor paint
+            mSensorPaint = new Paint();
+            mSensorPaint.setTypeface(NORMAL_TYPEFACE);
+            mSensorPaint.setAntiAlias(true);
+            mSensorPaint.setColor(
+                    ContextCompat.getColor(getApplicationContext(), R.color.digital_text));
+
+            //mIconPaint = new Paint();
 
             paoHandler.post(paoRunnable);
         }
@@ -281,6 +349,11 @@ public class LitroManager extends CanvasWatchFaceService {
 
             mCalendarPaint.setTextSize(calendarTextSize);
 
+            float sensorTextSize = resources.getDimension(isRound
+                    ? R.dimen.digital_sensor_text_size_round : R.dimen.digital_sensor_text_size);
+
+            mSensorPaint.setTextSize(sensorTextSize);
+
         }
 
         @Override
@@ -301,9 +374,21 @@ public class LitroManager extends CanvasWatchFaceService {
             super.onAmbientModeChanged(inAmbientMode);
 
             mAmbient = inAmbientMode;
+
+            // Handle sensor listeners when ambient mode changes
+            if (mAmbient) {
+                puller.unregisterSensorListener();
+                Log.d(TAG, "Unregistered sensor listener");
+            }
+            else {
+                puller.registerSensorListener();
+                Log.d(TAG, "Registered sensor listener");
+            }
+
             if (mLowBitAmbient) {
                 mTextPaint.setAntiAlias(!inAmbientMode);
                 mCalendarPaint.setAntiAlias(!inAmbientMode);
+                mSensorPaint.setAntiAlias(!inAmbientMode);
             }
 
             // Whether the timer should be running depends on whether we're visible (as well as
@@ -357,17 +442,26 @@ public class LitroManager extends CanvasWatchFaceService {
             mCalendar.setTimeInMillis(now);
 
             String text = mAmbient
-                    ? String.format("%d:%02d",
+                    ? String.format(Locale.US, "%d:%02d",
                     (mCalendar.get(Calendar.HOUR) == 0 ? 12 : mCalendar.get(Calendar.HOUR)),
                     mCalendar.get(Calendar.MINUTE))
-                    : String.format("%d:%02d:%02d",
+                    : String.format(Locale.US, "%d:%02d:%02d",
                     (mCalendar.get(Calendar.HOUR) == 0 ? 12 : mCalendar.get(Calendar.HOUR)),
                     mCalendar.get(Calendar.MINUTE), mCalendar.get(Calendar.SECOND));
             canvas.drawText(text, mXOffset, mYOffset, mTextPaint);
 
-            String date = String.format("%d/%d/%d", mCalendar.get(Calendar.MONTH),
+            String date = String.format(Locale.US, "%d/%d/%d", (mCalendar.get(Calendar.MONTH)+1),
                     mCalendar.get(Calendar.DAY_OF_MONTH), mCalendar.get(Calendar.YEAR));
             canvas.drawText(date, mXOffset, mYOffset + 30, mCalendarPaint);
+
+            Float pressure = puller.getPressureSensorVal();
+            String pressureData = mAmbient
+                    ? ""
+                    : String.format(Locale.US, "%.2f hPa", (pressure == null) ? 0f : pressure);
+            canvas.drawText(pressureData, mXOffset + 40, mYOffsetSensors, mSensorPaint);
+
+            if (!mAmbient)
+                canvas.drawBitmap(mBarometerIcon, mXOffset-5, mYOffsetSensors - 30, mSensorPaint);
         }
 
         /**
